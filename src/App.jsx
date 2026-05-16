@@ -2,7 +2,7 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import Training from './pages/Training';
 import Result from './pages/Result';
-import { preloadAIModel } from './pages/VideoEvaluation';
+import VideoEvaluation, { preloadAIModel } from './pages/VideoEvaluation';
 
 // アプリ起動時にAIモデルを事前読み込み
 preloadAIModel();
