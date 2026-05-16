@@ -252,7 +252,7 @@ const VideoEvaluation = () => {
                       </div>
                       {/* プレビュー画面 */}
                       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#fff' }}>
-                        <img src="/images/cpr_illustration_v3.png" alt="真横からの撮影例" style={{ 
+                        <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} alt="真横からの撮影例" style={{ 
                           width: '100%', 
                           height: '100%', 
                           objectFit: 'cover',
