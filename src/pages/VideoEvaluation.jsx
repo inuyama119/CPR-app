@@ -4,7 +4,29 @@ import { Camera, ArrowLeft, RotateCcw, AlertCircle, Play, Loader2, CheckCircle2,
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { motion, AnimatePresence } from 'framer-motion';
 
-let globalPoseLandmarker = null;
+export let globalPoseLandmarker = null;
+let aiLoadPromise = null;
+
+export const preloadAIModel = () => {
+  if (globalPoseLandmarker || aiLoadPromise) return aiLoadPromise;
+  
+  aiLoadPromise = (async () => {
+    try {
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+      globalPoseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`,
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5
+      });
+    } catch (e) {
+      console.error("AI Preload Error", e);
+    }
+  })();
+  return aiLoadPromise;
+};
 
 const VideoEvaluation = () => {
   const navigate = useNavigate();
@@ -29,19 +51,16 @@ const VideoEvaluation = () => {
 
   useEffect(() => {
     const initModel = async () => {
-      if (globalPoseLandmarker) { setIsModelLoaded(true); return; }
-      try {
-        const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
-        globalPoseLandmarker = await PoseLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`,
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5
-        });
+      if (globalPoseLandmarker) { 
+        setIsModelLoaded(true); 
+        return; 
+      }
+      await preloadAIModel();
+      if (globalPoseLandmarker) {
         setIsModelLoaded(true);
-      } catch (e) { setDebugLog('MODEL LOAD ERROR'); }
+      } else {
+        setDebugLog('MODEL LOAD ERROR');
+      }
     };
     initModel();
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
