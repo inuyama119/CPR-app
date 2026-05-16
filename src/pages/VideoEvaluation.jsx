@@ -90,8 +90,15 @@ const VideoEvaluation = () => {
     const video = videoRef.current;
     if (!video || !globalPoseLandmarker || !isAnalyzingRef.current) return;
     
+    // Check if video is ready to be processed
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      requestRef.current = requestAnimationFrame(predictLoop);
+      return;
+    }
+
     // 同期精度の向上: 100%に確実に到達させる
-    const p = Math.min(100, (video.currentTime / video.duration) * 100);
+    const duration = video.duration && isFinite(video.duration) ? video.duration : 1;
+    const p = Math.min(100, (video.currentTime / duration) * 100);
     setProgress(isNaN(p) ? 0 : p);
 
     if (video.paused || video.ended) { 
@@ -105,7 +112,9 @@ const VideoEvaluation = () => {
       if (results.landmarks && results.landmarks.length > 0) {
         processFrame(results.landmarks[0], video.currentTime);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("MediaPipe inference error:", e);
+    }
     requestRef.current = requestAnimationFrame(predictLoop);
   };
 
@@ -252,7 +261,7 @@ const VideoEvaluation = () => {
                       </div>
                       {/* プレビュー画面 */}
                       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#fff' }}>
-                        <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} alt="真横からの撮影例" style={{ 
+                        <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} fetchpriority="high" alt="真横からの撮影例" style={{ 
                           width: '100%', 
                           height: '100%', 
                           objectFit: 'cover',
@@ -323,7 +332,16 @@ const VideoEvaluation = () => {
         <div style={{ width: '100%', maxWidth: '800px', marginTop: '24px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
           <input type="file" accept="video/*" ref={inputRef} onChange={handleFileChange} style={{ display: 'none' }} />
           <button className="btn-pop secondary" onClick={() => inputRef.current.click()}>動画を選択</button>
-          {videoSrc && !isProcessing && <button className="btn-pop" onClick={startAnalysis}>解析を開始</button>}
+          {videoSrc && !isProcessing && (
+            isModelLoaded ? (
+              <button className="btn-pop" onClick={startAnalysis}>解析を開始</button>
+            ) : (
+              <button className="btn-pop" style={{ opacity: 0.6, cursor: 'not-allowed' }} disabled>
+                <Loader2 className="spinning" size={20} style={{ display: 'inline-block', verticalAlign: 'middle', marginRight: '8px' }} />
+                AI準備中...
+              </button>
+            )
+          )}
         </div>
 
         <div style={{ width: '100%', maxWidth: '800px', marginTop: '20px', background: 'white', padding: '16px', borderRadius: '16px', border: '2px solid #EEE', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
