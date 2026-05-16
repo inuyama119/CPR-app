@@ -1,0 +1,169 @@
+:root {
+  /* Pop Color Palette */
+  --primary: #FF4B72; /* Vibrant Pink/Red */
+  --primary-shadow: #D9254F;
+  --secondary: #3EE0C2; /* Bright Cyan */
+  --secondary-shadow: #1BB498;
+  --tertiary: #FFC03D; /* Bright Yellow/Orange */
+  --tertiary-shadow: #E0980B;
+  
+  --bg-top: #FFE5EC;
+  --bg-bottom: #FFF6DF;
+  
+  --text-dark: #2D2D2D;
+  --text-light: #FFFFFF;
+  --text-gray: #7A7A7A;
+  
+  --surface: rgba(255, 255, 255, 0.85);
+  --surface-border: rgba(255, 255, 255, 0.5);
+  
+  --error: #FF3B30;
+  --success: #34C759;
+  
+  /* Typography */
+  --font-en: 'Outfit', sans-serif;
+  --font-ja: 'Zen Maru Gothic', sans-serif;
+  
+  /* Shadows & Effects */
+  --shadow-sm: 0 4px 0 var(--text-dark);
+  --shadow-md: 0 8px 0 var(--text-dark);
+  --shadow-lg: 0 12px 24px rgba(0,0,0,0.1);
+  --glass-shadow: 0 8px 32px 0 rgba(255, 137, 168, 0.2);
+}
+
+/* Dark mode override removed to ensure consistent pop aesthetic */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ja);
+  background: linear-gradient(135deg, var(--bg-top), var(--bg-bottom));
+  background-attachment: fixed;
+  color: var(--text-dark);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-ja);
+  font-weight: 900;
+  color: var(--text-dark);
+  line-height: 1.2;
+}
+
+.en-text {
+  font-family: var(--font-en);
+}
+
+#root {
+  max-width: 600px; /* Mobile first / Game app feel */
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background: var(--surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-left: 2px solid var(--surface-border);
+  border-right: 2px solid var(--surface-border);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Common Pop UI Elements */
+.btn-pop {
+  font-family: var(--font-ja);
+  font-weight: 700;
+  font-size: 1.2rem;
+  padding: 16px 32px;
+  border-radius: 999px;
+  border: 3px solid var(--text-dark);
+  background: var(--primary);
+  color: var(--text-light);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.btn-pop:active {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 var(--text-dark);
+}
+
+.btn-pop.secondary {
+  background: var(--secondary);
+  color: var(--text-dark);
+}
+
+.btn-pop.tertiary {
+  background: var(--tertiary);
+  color: var(--text-dark);
+}
+
+/* Glass Card */
+.glass-card {
+  background: var(--surface);
+  border: 3px solid var(--text-dark);
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(10px);
+}
+
+/* Animations */
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+@keyframes pulse-heart {
+  0% { transform: scale(1); }
+  15% { transform: scale(1.2); }
+  30% { transform: scale(1); }
+  45% { transform: scale(1.2); }
+  60% { transform: scale(1); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-pulse {
+  animation: pulse-heart 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Utiltiy classes */
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.text-center {
+  text-align: center;
+}
+
+.mb-2 { margin-bottom: 8px; }
+.mb-4 { margin-bottom: 16px; }
+.mb-6 { margin-bottom: 24px; }
+.mb-8 { margin-bottom: 32px; }
+
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mt-6 { margin-top: 24px; }
+.mt-8 { margin-top: 32px; }

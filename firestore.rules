@@ -1,0 +1,10 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // パターンB: データベースを一切使用しない（全ての読み書きを遮断）
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>名刺印刷テンプレート - 胸骨圧迫マスター</title>
+    <style>
+        /* A4用紙のベース設定 */
+        @page {
+            size: A4;
+            margin: 0;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            background: #f0f0f0;
+            font-family: sans-serif;
+        }
+        .page {
+            width: 210mm;
+            height: 297mm;
+            background: white;
+            margin: 10mm auto;
+            position: relative;
+            box-sizing: border-box;
+            overflow: hidden;
+            display: grid;
+            grid-template-columns: 91mm 91mm;
+            grid-template-rows: repeat(5, 55mm);
+            /* A-one 51002等の標準的な余白設定 */
+            padding-top: 11mm;
+            padding-left: 14mm;
+            page-break-after: always;
+        }
+        .card {
+            width: 91mm;
+            height: 55mm;
+            position: relative;
+            box-sizing: border-box;
+            border: 0.1mm dashed #eee; /* 裁断位置の目安（印刷時は消すことも可能） */
+            overflow: hidden;
+        }
+        .card img.bg {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .qr-overlay {
+            position: absolute;
+            top: 25px; /* デザインに合わせて調整 */
+            right: 25px;
+            width: 80px;
+            height: 80px;
+            background: white;
+            padding: 5px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        /* 印刷時の設定 */
+        @media print {
+            body { background: none; }
+            .page { margin: 0; box-shadow: none; }
+            .card { border: none; }
+            .no-print { display: none; }
+        }
+
+        /* プレビュー用のスタイル */
+        .no-print {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #FF4B72;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+
+    <a href="#" class="no-print" onclick="window.print();return false;">このページを印刷する</a>
+
+    <!-- 1ページ目：表面 -->
+    <div class="page">
+        <!-- 10枚分ループ（手動配置） -->
+        <div class="card">
+            <img class="bg" src="card_front_final.png">
+            <img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app">
+        </div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+        <div class="card"><img class="bg" src="card_front_final.png"><img class="qr-overlay" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://cpr-test-f537e.web.app"></div>
+    </div>
+
+    <!-- 2ページ目：裏面 -->
+    <div class="page">
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+        <div class="card"><img class="bg" src="card_back_final.png"></div>
+    </div>
+
+</body>
+</html>
