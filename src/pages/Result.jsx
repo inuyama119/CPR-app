@@ -149,11 +149,7 @@ const Result = () => {
           )}
         </AnimatePresence>
 
-        <div style={{ textAlign: 'center', marginBottom: '24px', opacity: 0.6 }}>
-          <p style={{ fontSize: '0.7rem', fontWeight: 'bold' }}>
-            計測：BPM {scoreData.medianBpm} | 傾き {scoreData.medianTilt}° | 回数 {scoreData.compressions}回
-          </p>
-        </div>
+
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <button className="btn-pop" style={{ width: '100%' }} onClick={() => navigate('/video-eval')}>

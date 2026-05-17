@@ -363,6 +363,11 @@ const VideoEvaluation = () => {
           )}
         </div>
 
+        <div style={{ width: '100%', maxWidth: '800px', marginTop: '20px', background: 'white', padding: '16px', borderRadius: '16px', border: '2px solid #EEE', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div style={{ fontSize: '0.8rem', fontWeight: 900 }}>現在の傾き: {debugData.tilt}°</div>
+          <div style={{ fontSize: '0.8rem', fontWeight: 900 }}>圧迫回数: {debugData.compressions}回</div>
+        </div>
+
       </main>
     </div>
   );
