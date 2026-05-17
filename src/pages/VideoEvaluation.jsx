@@ -331,8 +331,17 @@ const VideoEvaluation = () => {
             <>
               <video ref={videoRef} src={videoSrc} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline muted />
               <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} />
+              
+              {!isModelLoaded && (
+                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'white', zIndex: 10 }}>
+                  <Loader2 className="spinning" size={48} style={{ marginBottom: '16px' }} />
+                  <p style={{ fontWeight: 900, fontSize: '1.2rem', marginBottom: '8px' }}>AIモデルを準備中...</p>
+                  <p style={{ fontSize: '0.9rem', opacity: 0.8 }}>そのままお待ちください</p>
+                </div>
+              )}
+
               {isProcessing && (
-                <div style={{ position: 'absolute', bottom: '20px', left: '20px', right: '20px' }}>
+                <div style={{ position: 'absolute', bottom: '20px', left: '20px', right: '20px', zIndex: 20 }}>
                   <div style={{ height: '8px', background: 'rgba(255,255,255,0.2)', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }}>
                     <motion.div initial={{ width: 0 }} animate={{ width: `${progress}%` }} style={{ height: '100%', background: 'var(--secondary)' }} />
                   </div>
