@@ -49,7 +49,7 @@ const Training = () => {
         <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: '#666' }}><ArrowLeft size={24} /></button>
       </div>
 
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px', gap: '16px', justifyContent: 'center' }}>
+      <main style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '16px', gap: '16px', justifyContent: 'center' }}>
         {/* イラストカード（1画面に収めるためサイズ調整） */}
         <div style={{ background: 'white', borderRadius: '24px', padding: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.05)', textAlign: 'center' }}>
           <img src={cprImg} alt="CPR" style={{ width: '100%', maxWidth: '240px', height: 'auto', marginBottom: '8px' }} />
@@ -74,7 +74,7 @@ const Training = () => {
       </main>
 
       {/* フッター操作（常に下部に固定） */}
-      <div style={{ padding: '20px', background: 'white', borderTop: '2px solid #EEE', textAlign: 'center' }}>
+      <div style={{ flexShrink: 0, padding: '20px', background: 'white', borderTop: '2px solid #EEE', textAlign: 'center' }}>
         <AnimatePresence mode="wait">
           {!isCounting ? (
             <motion.button 

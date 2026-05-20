@@ -11,7 +11,7 @@ function App() {
   return (
     <>
       {/* イラスト画像の事前読み込み (非表示) */}
-      <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} style={{ display: 'none' }} alt="preload" fetchpriority="high" />
+      <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} style={{ display: 'none' }} alt="preload" fetchPriority="high" />
       
       <HashRouter>
         <Routes>

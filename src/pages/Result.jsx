@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Trophy, RotateCcw, Home, AlertTriangle, Activity, Target, Zap, MessageCircle } from 'lucide-react';
+import { RotateCcw, Home, AlertTriangle, Activity, Zap, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 

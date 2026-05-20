@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Activity, Play, ClipboardCheck, Video, BookOpen } from 'lucide-react';
+import { Activity, ClipboardCheck, Video } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const Home = () => {

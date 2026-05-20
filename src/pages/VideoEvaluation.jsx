@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, ArrowLeft, RotateCcw, AlertCircle, Play, Loader2, CheckCircle2, Activity, Zap, Target, Smartphone, User2, Clock } from 'lucide-react';
+import { Camera, ArrowLeft, AlertCircle, Loader2, Activity, User2, Clock } from 'lucide-react';
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -12,7 +12,7 @@ export const preloadAIModel = () => {
   
   aiLoadPromise = (async () => {
     try {
-      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
+      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm");
       globalPoseLandmarker = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: {
           modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task`,
@@ -44,7 +44,7 @@ const VideoEvaluation = () => {
   const [showInstructions, setShowInstructions] = useState(true);
   
   const statsRef = useRef({
-    totalFrames: 0, tiltValues: [], bpmValues: [], lastY: 0,
+    totalFrames: 0, tiltValues: [], bpmValues: [], lastY: -1,
     isMovingDown: false, peakY: 0, lastCompTime: 0, compressions: 0, recentBpms: []
   });
   const isAnalyzingRef = useRef(false);
@@ -78,14 +78,17 @@ const VideoEvaluation = () => {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      setVideoSrc(URL.createObjectURL(file));
+      setVideoSrc(prev => {
+        if (prev) URL.revokeObjectURL(prev);
+        return URL.createObjectURL(file);
+      });
       resetStats();
       setProgress(0);
     }
   };
 
   const resetStats = () => {
-    statsRef.current = { totalFrames: 0, tiltValues: [], bpmValues: [], lastY: 0, isMovingDown: false, peakY: 0, lastCompTime: 0, compressions: 0, recentBpms: [] };
+    statsRef.current = { totalFrames: 0, tiltValues: [], bpmValues: [], lastY: -1, isMovingDown: false, peakY: 0, lastCompTime: 0, compressions: 0, recentBpms: [] };
     setDebugData({ tilt: 0, compressions: 0 });
     isAnalyzingRef.current = false;
   };
@@ -159,6 +162,10 @@ const VideoEvaluation = () => {
     const wrist = landmarks[15].visibility > landmarks[16].visibility ? landmarks[15] : landmarks[16];
     const shoulder = landmarks[15].visibility > landmarks[16].visibility ? landmarks[11] : landmarks[12];
 
+    if (stats.lastY === -1) {
+      stats.lastY = wrist.y;
+      return;
+    }
     const smoothedY = 0.4 * wrist.y + 0.6 * stats.lastY;
     const diff = smoothedY - stats.lastY;
     stats.lastY = smoothedY;
@@ -280,7 +287,7 @@ const VideoEvaluation = () => {
                       </div>
                       {/* プレビュー画面 */}
                       <div style={{ flex: 1, position: 'relative', overflow: 'hidden', background: '#fff' }}>
-                        <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} fetchpriority="high" alt="真横からの撮影例" style={{ 
+                        <img src={`${import.meta.env.BASE_URL}images/cpr_illustration_v3.png`} fetchPriority="high" alt="真横からの撮影例" style={{
                           width: '100%', 
                           height: '100%', 
                           objectFit: 'cover',
