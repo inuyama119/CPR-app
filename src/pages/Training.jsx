@@ -17,18 +17,42 @@ const Training = () => {
   }, []);
 
   const playMetronomeSound = () => {
-    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = audioCtxRef.current.createOscillator();
-    const gain = audioCtxRef.current.createGain();
-    osc.connect(gain); gain.connect(audioCtxRef.current.destination);
-    osc.frequency.setValueAtTime(880, audioCtxRef.current.currentTime);
-    gain.gain.setValueAtTime(0.1, audioCtxRef.current.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtxRef.current.currentTime + 0.05);
-    osc.start(); osc.stop(audioCtxRef.current.currentTime + 0.05);
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.08);
   };
 
-  const startTraining = () => {
+  const startTraining = async () => {
     setIsCounting(true);
+
+    // ユーザージェスチャー内で AudioContext を生成・アンロック（iOS消音モード対応）
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const ctx = audioCtxRef.current;
+
+    // iOS では AudioContext が suspended 状態で生成される → resume() が必須
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+
+    // 無音バッファを再生して全 iOS バージョンでオーディオコンテキストを完全アンロック
+    const silentBuf = ctx.createBuffer(1, 1, 22050);
+    const silentSrc = ctx.createBufferSource();
+    silentSrc.buffer = silentBuf;
+    silentSrc.connect(ctx.destination);
+    silentSrc.start(0);
+
+    // 最初のビートを即時再生し、以降はインターバルで継続
+    playMetronomeSound();
     if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
     metronomeIntervalRef.current = setInterval(playMetronomeSound, 60000 / 110);
   };
