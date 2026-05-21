@@ -21,6 +21,23 @@ export const preloadAIModel = () => {
         runningMode: "VIDEO",
         numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5
       });
+
+      // GPU パイプラインを事前ウォームアップ（初回 detectForVideo のラグを解消）
+      // ダミーキャンバスで数フレーム推論し、シェーダコンパイル・メモリ確保を済ませる
+      try {
+        const dummy = document.createElement('canvas');
+        dummy.width = 256;
+        dummy.height = 256;
+        const dctx = dummy.getContext('2d');
+        dctx.fillStyle = '#888';
+        dctx.fillRect(0, 0, 256, 256);
+        const baseTs = performance.now();
+        for (let i = 0; i < 3; i++) {
+          globalPoseLandmarker.detectForVideo(dummy, baseTs + i * 16);
+        }
+      } catch (warmErr) {
+        console.warn("AI Warmup skipped:", warmErr);
+      }
     } catch (e) {
       console.error("AI Preload Error", e);
     }
@@ -97,12 +114,48 @@ const VideoEvaluation = () => {
     if (!videoRef.current || !globalPoseLandmarker) return;
     setIsProcessing(true);
     isAnalyzingRef.current = true;
-    videoRef.current.currentTime = 0;
+    const video = videoRef.current;
+
+    // 動画が完全バッファされるまで待つ（readyState 4 = HAVE_ENOUGH_DATA）
+    // これがないと play() 後の最初の数百msが描画停滞 → 進捗ジャンプの原因
+    if (video.readyState < 4) {
+      setDebugLog('LOADING VIDEO...');
+      await new Promise((resolve) => {
+        const onReady = () => {
+          video.removeEventListener('canplaythrough', onReady);
+          video.removeEventListener('loadeddata', onReady);
+          resolve();
+        };
+        video.addEventListener('canplaythrough', onReady, { once: true });
+        // フォールバック: 一部端末で canplaythrough が発火しない場合への保険
+        video.addEventListener('loadeddata', () => {
+          if (video.readyState >= 3) onReady();
+        }, { once: true });
+        // 最大 5 秒のタイムアウト（無限待ち防止）
+        setTimeout(onReady, 5000);
+        try { video.load(); } catch (_) {}
+      });
+    }
+
+    // 動画の先頭フレームを表示してから解析開始
+    video.currentTime = 0;
+    await new Promise((resolve) => {
+      const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+      video.addEventListener('seeked', onSeeked, { once: true });
+      setTimeout(onSeeked, 1000); // フォールバック
+    });
+
+    // この動画でも 1 回ウォームアップ推論しておく（GPU パイプラインを完全に温める）
     try {
-      await videoRef.current.play();
+      globalPoseLandmarker.detectForVideo(video, performance.now());
+    } catch (_) {}
+
+    setDebugLog('ANALYZING');
+    try {
+      await video.play();
       requestRef.current = requestAnimationFrame(predictLoop);
-    } catch (e) { 
-      setDebugLog('PLAY BLOCKED'); 
+    } catch (e) {
+      setDebugLog('PLAY BLOCKED');
       isAnalyzingRef.current = false;
       setIsProcessing(false);
     }
@@ -336,7 +389,7 @@ const VideoEvaluation = () => {
         <div style={{ position: 'relative', width: '100%', maxWidth: '800px', aspectRatio: '16/9', background: '#000', borderRadius: '24px', overflow: 'hidden' }}>
           {videoSrc ? (
             <>
-              <video ref={videoRef} src={videoSrc} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline muted />
+              <video ref={videoRef} src={videoSrc} style={{ width: '100%', height: '100%', objectFit: 'contain' }} playsInline muted preload="auto" />
               <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }} />
               
               {!isModelLoaded && (
