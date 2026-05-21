@@ -30,28 +30,28 @@ const Training = () => {
     osc.stop(ctx.currentTime + 0.08);
   };
 
-  const startTraining = async () => {
+  const startTraining = () => {
+    // async/await を使わない: iOS Safari のユーザージェスチャー検出は同期コールスタックのみ有効
+    // await を使うとコールスタックが切れ、その後の音声操作がジェスチャー外と判定される
     setIsCounting(true);
 
-    // ユーザージェスチャー内で AudioContext を生成・アンロック（iOS消音モード対応）
     if (!audioCtxRef.current) {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
     const ctx = audioCtxRef.current;
 
-    // iOS では AudioContext が suspended 状態で生成される → resume() が必須
-    if (ctx.state === 'suspended') {
-      await ctx.resume();
-    }
+    // 同期的に resume() を呼ぶ（await しない）
+    // この呼び出しタイミングでiOS SafariにPlaybackカテゴリを登録 → 消音モード解除
+    ctx.resume();
 
-    // 無音バッファを再生して全 iOS バージョンでオーディオコンテキストを完全アンロック
-    const silentBuf = ctx.createBuffer(1, 1, 22050);
+    // 1サンプルの無音バッファで全iOSバージョンをアンロック
+    const silentBuf = ctx.createBuffer(1, 1, ctx.sampleRate);
     const silentSrc = ctx.createBufferSource();
     silentSrc.buffer = silentBuf;
     silentSrc.connect(ctx.destination);
     silentSrc.start(0);
 
-    // 最初のビートを即時再生し、以降はインターバルで継続
+    // 最初のビートを即時再生（サスペンド中でもキューに入り、resume後に再生される）
     playMetronomeSound();
     if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
     metronomeIntervalRef.current = setInterval(playMetronomeSound, 60000 / 110);
@@ -68,7 +68,7 @@ const Training = () => {
       <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <Heart size={18} color="#FF4B72" fill="#FF4B72" />
-          <h2 style={{ fontSize: '1rem', fontWeight: 900, color: '#333', margin: 0 }}>姿勢復習 (110BPM)</h2>
+          <h2 style={{ fontSize: '1rem', fontWeight: 900, color: '#333', margin: 0 }}>姿勢復習</h2>
         </div>
         <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: '#666' }}><ArrowLeft size={24} /></button>
       </div>
