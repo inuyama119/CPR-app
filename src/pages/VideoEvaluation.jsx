@@ -56,7 +56,6 @@ const VideoEvaluation = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [debugLog, setDebugLog] = useState('READY');
   const [debugData, setDebugData] = useState({ tilt: 0, compressions: 0 });
   const [showInstructions, setShowInstructions] = useState(true);
   
@@ -76,7 +75,7 @@ const VideoEvaluation = () => {
       if (globalPoseLandmarker) {
         setIsModelLoaded(true);
       } else {
-        setDebugLog('MODEL LOAD ERROR');
+        console.error('AI model failed to load');
       }
     };
     initModel();
@@ -95,6 +94,9 @@ const VideoEvaluation = () => {
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file) {
+      // 解析中に別動画を選択した場合: RAF を止めて isProcessing もリセット
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      setIsProcessing(false);
       setVideoSrc(prev => {
         if (prev) URL.revokeObjectURL(prev);
         return URL.createObjectURL(file);
@@ -116,33 +118,35 @@ const VideoEvaluation = () => {
     isAnalyzingRef.current = true;
     const video = videoRef.current;
 
-    // 動画が完全バッファされるまで待つ（readyState 4 = HAVE_ENOUGH_DATA）
-    // これがないと play() 後の最初の数百msが描画停滞 → 進捗ジャンプの原因
-    if (video.readyState < 4) {
-      setDebugLog('LOADING VIDEO...');
+    // 動画が十分バッファされるまで待つ（readyState 3以上 = HAVE_FUTURE_DATA）
+    // video.load() は呼ばない: preload="auto" で既にバッファ済みの場合に再ロードが起きて逆効果
+    if (video.readyState < 3) {
       await new Promise((resolve) => {
+        let timeoutId;
+        let onLoadedData;
         const onReady = () => {
+          clearTimeout(timeoutId);
           video.removeEventListener('canplaythrough', onReady);
-          video.removeEventListener('loadeddata', onReady);
+          video.removeEventListener('loadeddata', onLoadedData);
           resolve();
         };
+        // loadeddata は readyState 2以上で発火するが、ここでは readyState >= 3 を条件にする
+        onLoadedData = () => { if (video.readyState >= 3) onReady(); };
         video.addEventListener('canplaythrough', onReady, { once: true });
-        // フォールバック: 一部端末で canplaythrough が発火しない場合への保険
-        video.addEventListener('loadeddata', () => {
-          if (video.readyState >= 3) onReady();
-        }, { once: true });
+        video.addEventListener('loadeddata', onLoadedData, { once: true });
         // 最大 5 秒のタイムアウト（無限待ち防止）
-        setTimeout(onReady, 5000);
-        try { video.load(); } catch (_) {}
+        timeoutId = setTimeout(onReady, 5000);
       });
     }
 
     // 動画の先頭フレームを表示してから解析開始
     video.currentTime = 0;
     await new Promise((resolve) => {
-      const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
-      video.addEventListener('seeked', onSeeked, { once: true });
-      setTimeout(onSeeked, 1000); // フォールバック
+      const timeoutId = setTimeout(resolve, 1000); // フォールバック
+      video.addEventListener('seeked', () => {
+        clearTimeout(timeoutId);
+        resolve();
+      }, { once: true });
     });
 
     // この動画でも 1 回ウォームアップ推論しておく（GPU パイプラインを完全に温める）
@@ -150,12 +154,11 @@ const VideoEvaluation = () => {
       globalPoseLandmarker.detectForVideo(video, performance.now());
     } catch (_) {}
 
-    setDebugLog('ANALYZING');
     try {
       await video.play();
       requestRef.current = requestAnimationFrame(predictLoop);
     } catch (e) {
-      setDebugLog('PLAY BLOCKED');
+      console.warn('Video play blocked:', e);
       isAnalyzingRef.current = false;
       setIsProcessing(false);
     }
@@ -419,7 +422,7 @@ const VideoEvaluation = () => {
 
         <div style={{ width: '100%', maxWidth: '800px', marginTop: '24px', display: 'flex', gap: '12px', justifyContent: 'center' }}>
           <input type="file" accept="video/*" ref={inputRef} onChange={handleFileChange} style={{ display: 'none' }} />
-          <button className="btn-pop secondary" onClick={() => inputRef.current.click()}>動画を選択</button>
+          <button className="btn-pop secondary" onClick={() => inputRef.current.click()} disabled={isProcessing} style={isProcessing ? { opacity: 0.5, cursor: 'not-allowed' } : {}}>動画を選択</button>
           {videoSrc && !isProcessing && (
             isModelLoaded ? (
               <button className="btn-pop" onClick={startAnalysis}>解析を開始</button>

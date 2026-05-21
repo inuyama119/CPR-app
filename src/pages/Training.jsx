@@ -13,6 +13,11 @@ const Training = () => {
   useEffect(() => {
     return () => {
       if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
+      // AudioContext をクリーンアップ（アンマウント後もオーディオエンジンが動き続けるのを防ぐ）
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
+      }
     };
   }, []);
 
