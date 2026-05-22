@@ -45,7 +45,7 @@ function createBeepBlobUrl() {
   for (let i = 0; i < numSamples; i++) {
     const t        = i / sampleRate;
     const envelope = 1 - i / numSamples;   // 1.0 → 0.0 で急速減衰
-    const sample   = Math.sin(2 * Math.PI * freq * t) * envelope * 0.8;
+    const sample   = Math.sin(2 * Math.PI * freq * t) * envelope;
     view.setInt16(44 + i * 2, Math.round(sample * 32767), true);
   }
 
