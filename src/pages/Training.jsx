@@ -4,117 +4,125 @@ import { ArrowLeft, Play, Square, Heart, CheckCircle2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import cprImg from '../assets/cpr_illustration.png';
 
-// ── WAV Blob生成ユーティリティ ──────────────────────────────────────────────
-// Web Audio API（AudioContext）はiOSの"Ambient"カテゴリに割り当てられ、
-// 消音スイッチをオフにしても音が出ない。
-// HTMLAudioElement はユーザージェスチャー内で play() を呼ぶと
-// iOSが"Playback"カテゴリに昇格し、消音スイッチを無視して再生される。
-// そのため音声を WAV Blob URL として生成し、<Audio> 要素で再生する。
+// ── WAV Blob 生成 ──────────────────────────────────────────────────────────────
 function createBeepBlobUrl() {
-  const sampleRate = 8000;       // Hz
-  const duration   = 0.08;       // 80ms
-  const freq       = 880;        // Hz (A5)
+  const sampleRate = 8000;
+  const duration   = 0.08;   // 80ms
+  const freq       = 880;    // A5
   const numSamples = Math.floor(sampleRate * duration);
-  const dataBytes  = numSamples * 2; // 16-bit PCM = 2 bytes/sample
+  const dataBytes  = numSamples * 2;
 
   const buffer = new ArrayBuffer(44 + dataBytes);
   const view   = new DataView(buffer);
-
-  const writeStr = (offset, str) => {
+  const ws = (offset, str) => {
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   };
 
-  // RIFFヘッダー
-  writeStr(0,  'RIFF');
-  view.setUint32(4,  36 + dataBytes, true); // ファイルサイズ - 8
-  writeStr(8,  'WAVE');
-  // fmtチャンク
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);             // チャンクサイズ (PCM=16)
-  view.setUint16(20,  1, true);             // フォーマット (1=PCM)
-  view.setUint16(22,  1, true);             // チャンネル数 (1=mono)
-  view.setUint32(24, sampleRate, true);     // サンプルレート
-  view.setUint32(28, sampleRate * 2, true); // バイトレート (rate×ch×bits/8)
-  view.setUint16(32,  2, true);             // ブロックアライン (ch×bits/8)
-  view.setUint16(34, 16, true);             // ビット深度
-  // dataチャンク
-  writeStr(36, 'data');
-  view.setUint32(40, dataBytes, true);
+  ws(0,  'RIFF'); view.setUint32(4,  36 + dataBytes, true); ws(8, 'WAVE');
+  ws(12, 'fmt '); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  ws(36, 'data'); view.setUint32(40, dataBytes, true);
 
-  // サイン波 + リニア減衰エンベロープ
   for (let i = 0; i < numSamples; i++) {
     const t        = i / sampleRate;
-    const envelope = 1 - i / numSamples;   // 1.0 → 0.0 で急速減衰
+    const envelope = 1 - i / numSamples;
     const sample   = Math.sin(2 * Math.PI * freq * t) * envelope;
     view.setInt16(44 + i * 2, Math.round(sample * 32767), true);
   }
-
   return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
 }
-// ───────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-// iOS では ended 状態の Audio に currentTime=0 を set するとシーク中状態に入り、
-// 直後の play() が失敗する。プールを使い、各要素の ended イベントで事前リセットすることで
-// play() 呼び出し時に常に「一時停止・先頭」状態を保証する。
-const POOL_SIZE = 4;
+// ── タイミング設計 ────────────────────────────────────────────────────────────
+// ❌ setInterval: JSイベントループ依存 → 各ビートの誤差が累積してズレる
+// ✅ ルックアヘッドスケジューラ:
+//      - AudioContext.currentTime（ハードウェアクロック）で絶対時刻を管理
+//      - 25ms ごとに scheduler() を呼び出し
+//      - 今後 100ms 以内のビートを setTimeout でキューイング
+//      - 各ビートは独立した絶対時刻を持つ → 累積誤差なし
+// ✅ iOS 消音モード:
+//      - ユーザージェスチャー内で HTMLAudioElement.play() を呼ぶと
+//        iOS の音声セッションが "Playback" カテゴリに昇格し、消音スイッチを無視
+//      - 1ビート目だけ startTraining() 内で同期再生してセッションを昇格
+//      - 以降の setTimeout からの play() も Playback セッション内で動作
+// ─────────────────────────────────────────────────────────────────────────────
+const BPM            = 110;
+const BEAT_INTERVAL  = 60 / BPM;  // ~0.5454 秒
+const SCHEDULE_AHEAD = 0.10;      // 100ms 先まで先読み
+const LOOKAHEAD_MS   = 25;        // スケジューラのポーリング間隔
 
 const Training = () => {
   const navigate = useNavigate();
-  const beepUrlRef           = useRef(null); // Blob URL (解放用)
-  const audioPoolRef         = useRef([]);   // Audio要素プール
-  const poolIndexRef         = useRef(0);    // 次に使う要素のインデックス
-  const metronomeIntervalRef = useRef(null);
+  const beepUrlRef        = useRef(null); // WAV Blob URL
+  const audioCtxRef       = useRef(null); // AudioContext（クロック用）
+  const nextBeatTimeRef   = useRef(0);    // 次のビートの絶対時刻（秒）
+  const schedulerTimerRef = useRef(null); // ルックアヘッドループの setTimeout ID
   const [isCounting, setIsCounting] = useState(false);
 
-  // マウント時に WAV Blob と Audio プールを準備
   useEffect(() => {
     const url = createBeepBlobUrl();
     beepUrlRef.current = url;
 
-    // POOL_SIZE 個の Audio 要素を生成。各要素に ended ハンドラで自動リセットを設定
-    const pool = Array.from({ length: POOL_SIZE }, () => {
-      const a = new Audio(url);
-      a.preload = 'auto';
-      // 再生終了後に currentTime を即リセット → 次の play() がシーク不要で即時開始できる
-      a.addEventListener('ended', () => { a.currentTime = 0; });
-      return a;
-    });
-    audioPoolRef.current = pool;
-
     return () => {
-      if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
-      pool.forEach(a => a.pause());
-      audioPoolRef.current = [];
-      if (beepUrlRef.current) {
-        URL.revokeObjectURL(beepUrlRef.current);
-        beepUrlRef.current = null;
+      clearTimeout(schedulerTimerRef.current);
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
       }
+      URL.revokeObjectURL(url);
+      beepUrlRef.current = null;
     };
   }, []);
 
-  // プールから次の要素を取り出して再生
-  // ended ハンドラが currentTime=0 を保証しているので、play() のみ呼べばよい
+  // 1ビート再生
+  // 毎回フレッシュな Audio 要素を生成することで、要素の状態（ended / seeking）に
+  // 依存しない確実な再生を保証する。Blob URL は共有なので実データのコピーなし。
   const playBeep = () => {
-    const pool = audioPoolRef.current;
-    if (!pool.length) return;
-    const a = pool[poolIndexRef.current % POOL_SIZE];
-    poolIndexRef.current++;
-    a.play().catch(() => {});
+    const url = beepUrlRef.current;
+    if (!url) return;
+    new Audio(url).play().catch(() => {});
+  };
+
+  // ルックアヘッドスケジューラ
+  // nextBeatTimeRef が示す絶対時刻を基点に、SCHEDULE_AHEAD 秒先までのビートを
+  // setTimeout でキューイング。setInterval と異なり誤差が累積しない。
+  const scheduler = () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+
+    while (nextBeatTimeRef.current < ctx.currentTime + SCHEDULE_AHEAD) {
+      const delayMs = Math.max(0, (nextBeatTimeRef.current - ctx.currentTime) * 1000);
+      setTimeout(playBeep, delayMs);
+      nextBeatTimeRef.current += BEAT_INTERVAL;
+    }
+
+    schedulerTimerRef.current = setTimeout(scheduler, LOOKAHEAD_MS);
   };
 
   const startTraining = () => {
     setIsCounting(true);
-    poolIndexRef.current = 0;
-    // ユーザージェスチャーの同期コールスタック内で即時再生
-    // → iOSが音声セッションを "Ambient"→"Playback" に昇格し、消音スイッチを無視する
+
+    // AudioContext 生成・再開（ユーザージェスチャー内、同期）
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    audioCtxRef.current.resume();
+
+    // 1ビート目: ユーザージェスチャーの同期スタック内で即時再生
+    // → iOS セッションを "Playback" に昇格させ、消音スイッチを無視させる
     playBeep();
-    if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
-    metronomeIntervalRef.current = setInterval(playBeep, 60000 / 110);
+
+    // 2ビート目以降: ルックアヘッドスケジューラで精密タイミング
+    clearTimeout(schedulerTimerRef.current);
+    nextBeatTimeRef.current = audioCtxRef.current.currentTime + BEAT_INTERVAL;
+    scheduler();
   };
 
   const stopTraining = () => {
     setIsCounting(false);
-    if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
+    clearTimeout(schedulerTimerRef.current);
   };
 
   return (
@@ -129,7 +137,7 @@ const Training = () => {
       </div>
 
       <main style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '16px', gap: '16px', justifyContent: 'center' }}>
-        {/* イラストカード（1画面に収めるためサイズ調整） */}
+        {/* イラストカード */}
         <div style={{ background: 'white', borderRadius: '24px', padding: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.05)', textAlign: 'center' }}>
           <img src={cprImg} alt="CPR" style={{ width: '100%', maxWidth: '240px', height: 'auto', marginBottom: '8px' }} />
           <div style={{ fontSize: '1rem', fontWeight: 900, color: '#FF4B72' }}>目標テンポ: 110回/分</div>
