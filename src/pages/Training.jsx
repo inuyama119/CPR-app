@@ -53,29 +53,38 @@ function createBeepBlobUrl() {
 }
 // ───────────────────────────────────────────────────────────────────────────
 
+// iOS では ended 状態の Audio に currentTime=0 を set するとシーク中状態に入り、
+// 直後の play() が失敗する。プールを使い、各要素の ended イベントで事前リセットすることで
+// play() 呼び出し時に常に「一時停止・先頭」状態を保証する。
+const POOL_SIZE = 4;
+
 const Training = () => {
   const navigate = useNavigate();
-  const audioRef            = useRef(null); // HTMLAudioElement
-  const beepUrlRef          = useRef(null); // Blob URL (解放用)
+  const beepUrlRef           = useRef(null); // Blob URL (解放用)
+  const audioPoolRef         = useRef([]);   // Audio要素プール
+  const poolIndexRef         = useRef(0);    // 次に使う要素のインデックス
   const metronomeIntervalRef = useRef(null);
   const [isCounting, setIsCounting] = useState(false);
 
-  // マウント時に WAV Blob を生成し Audio 要素を準備
+  // マウント時に WAV Blob と Audio プールを準備
   useEffect(() => {
-    const url   = createBeepBlobUrl();
+    const url = createBeepBlobUrl();
     beepUrlRef.current = url;
 
-    const audio   = new Audio(url);
-    audio.preload = 'auto';
-    audioRef.current = audio;
+    // POOL_SIZE 個の Audio 要素を生成。各要素に ended ハンドラで自動リセットを設定
+    const pool = Array.from({ length: POOL_SIZE }, () => {
+      const a = new Audio(url);
+      a.preload = 'auto';
+      // 再生終了後に currentTime を即リセット → 次の play() がシーク不要で即時開始できる
+      a.addEventListener('ended', () => { a.currentTime = 0; });
+      return a;
+    });
+    audioPoolRef.current = pool;
 
-    // アンマウント時にリソースを解放
     return () => {
       if (metronomeIntervalRef.current) clearInterval(metronomeIntervalRef.current);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
+      pool.forEach(a => a.pause());
+      audioPoolRef.current = [];
       if (beepUrlRef.current) {
         URL.revokeObjectURL(beepUrlRef.current);
         beepUrlRef.current = null;
@@ -83,16 +92,19 @@ const Training = () => {
     };
   }, []);
 
-  // 1ビート再生（currentTime をリセットして即再生）
+  // プールから次の要素を取り出して再生
+  // ended ハンドラが currentTime=0 を保証しているので、play() のみ呼べばよい
   const playBeep = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = 0;
-    audio.play().catch(() => {}); // 自動再生ブロックは無視（初回はユーザージェスチャー内で呼ぶため問題なし）
+    const pool = audioPoolRef.current;
+    if (!pool.length) return;
+    const a = pool[poolIndexRef.current % POOL_SIZE];
+    poolIndexRef.current++;
+    a.play().catch(() => {});
   };
 
   const startTraining = () => {
     setIsCounting(true);
+    poolIndexRef.current = 0;
     // ユーザージェスチャーの同期コールスタック内で即時再生
     // → iOSが音声セッションを "Ambient"→"Playback" に昇格し、消音スイッチを無視する
     playBeep();
