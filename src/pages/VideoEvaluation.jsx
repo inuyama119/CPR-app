@@ -40,6 +40,7 @@ export const preloadAIModel = () => {
       }
     } catch (e) {
       console.error("AI Preload Error", e);
+      aiLoadPromise = null; // 失敗時はリセット → 再呼び出し時にリトライ可能にする
     }
   })();
   return aiLoadPromise;
@@ -81,6 +82,13 @@ const VideoEvaluation = () => {
     initModel();
     return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
   }, []);
+
+  // videoSrc（動画ファイルの Blob URL）のメモリ解放
+  // handleFileChange では前の URL を即時 revoke しているが、
+  // アンマウント時（結果画面遷移後）に現在の URL が残るため useEffect で確実に解放する
+  useEffect(() => {
+    return () => { if (videoSrc) URL.revokeObjectURL(videoSrc); };
+  }, [videoSrc]);
 
   useEffect(() => {
     if (showInstructions) {
