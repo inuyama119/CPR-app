@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Square, Heart, Activity, Camera } from 'lucide-react';
+import { ArrowLeft, Play, Square, Heart, Activity, Camera, ShieldCheck, Volume2, VolumeX, CircleAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import cprImg from '../assets/cpr_illustration.png';
 import { MotionSignal, BeatDetector, median } from '../lib/cpr-rhythm-core.js';
@@ -87,6 +87,12 @@ const T_LOW  = gaugeT(BPM_LOW);   // 0.40
 const T_HIGH = gaugeT(BPM_HIGH);  // 0.60
 const GAP    = 0.012;             // ゾーン間のすき間
 
+// リズム音の ON/OFF は端末ごとに覚えておく（保存できない環境では毎回 ON から）
+const SOUND_KEY = 'cpr-training.rhythmSound';
+const readSoundPref = () => {
+  try { return localStorage.getItem(SOUND_KEY) !== 'off'; } catch { return true; }
+};
+
 const Training = () => {
   const navigate = useNavigate();
 
@@ -95,16 +101,21 @@ const Training = () => {
   const audioCtxRef       = useRef(null);
   const nextBeatTimeRef   = useRef(0);
   const schedulerTimerRef = useRef(null);
+  const beepTimersRef     = useRef([]);     // 予約済みビープの setTimeout ID
 
   // ── カメラ・解析 refs ───────────────────────────────────────────────────────
-  const videoRef          = useRef(null);   // <video> DOM要素
+  // <video> は1つだけ。待機中は大きなプレビュー、練習中はゲージ横の小窓になる。
+  // （iOS では同じストリームを複数の <video> で再生すると片方が止まることがあるため）
+  const videoRef          = useRef(null);
   const offscreenCanvas   = useRef(null);   // 160×120 オフスクリーン canvas
   const streamRef         = useRef(null);   // MediaStream
+  const cameraPromiseRef  = useRef(null);   // 取得中の getUserMedia（二重要求を防ぐ）
+  const cameraGrantedRef  = useRef(false);  // カメラ許可済みと分かっているか
+  const unmountedRef      = useRef(false);
   const rafRef            = useRef(null);   // rAF ID（フォールバック時）
   const vfcIdRef          = useRef(null);   // requestVideoFrameCallback ID
   const runningRef        = useRef(false);  // フレームループ継続フラグ
-  const runIdRef          = useRef(0);      // 開始世代。停止後に古い非同期処理を無効化する
-  const beepTimersRef     = useRef([]);     // 予約済みビープの setTimeout ID
+  const runIdRef          = useRef(0);      // 練習の世代。停止後に古い非同期処理を無効化する
   const signalRef         = useRef(null);   // MotionSignal
   const detectorRef       = useRef(null);   // BeatDetector
   const samplesRef        = useRef([]);     // 直近 6 秒のサンプル
@@ -115,19 +126,26 @@ const Training = () => {
 
   // ── state ──────────────────────────────────────────────────────────────────
   const [isCounting,     setIsCounting]     = useState(false);
+  // カメラの状態: off / requesting（許可ダイアログ中）/ on / denied（拒否）/ error / unavailable
+  const [camState,       setCamState]       = useState('off');
+  const [cameraGranted,  setCameraGranted]  = useState(false);
+  const [soundOn,        setSoundOn]        = useState(readSoundPref);
+  const soundOnRef = useRef(soundOn);
   const [bpm,            setBpm]            = useState(null);
   const [beatCount,      setBeatCount]      = useState(0);
   const [motionDetected, setMotionDetected] = useState(false);
   const [cameraError,    setCameraError]    = useState(null);
 
   // ── メトロノーム ────────────────────────────────────────────────────────────
+  // リズム音 OFF のあいだもスケジューラは回し続け、鳴らす瞬間に判定する。
+  // こうすると練習中に ON/OFF を切り替えても拍の位置がずれない。
   const playBeep = () => {
     const url = beepUrlRef.current;
-    if (!url) return;
+    if (!url || !soundOnRef.current) return;
     new Audio(url).play().catch(() => {});
   };
 
-  // 予約済みビープは stop 時に取り消せるよう ID を保持する。
+  // 予約済みビープは停止時に取り消せるよう ID を保持する。
   // 発火したものは自分で配列から外すので、配列には未発火分しか残らない。
   const scheduleBeep = (delayMs) => {
     const id = setTimeout(() => {
@@ -148,6 +166,16 @@ const Training = () => {
     schedulerTimerRef.current = setTimeout(scheduler, LOOKAHEAD_MS);
   };
 
+  const toggleSound = () => {
+    const next = !soundOnRef.current;
+    soundOnRef.current = next;
+    setSoundOn(next);
+    try { localStorage.setItem(SOUND_KEY, next ? 'on' : 'off'); } catch { /* 保存できなくても動作には影響しない */ }
+    // ON にしたらタップの中で1回鳴らす。確認音を兼ね、iOS の音声セッションを
+    // Playback に上げる（OFF で開始した練習の途中で ON にした場合もマナーモードで鳴るように）
+    if (next) playBeep();
+  };
+
   // ── 1コマ解析 ───────────────────────────────────────────────────────────────
   const grabFrame = () => {
     const video  = videoRef.current;
@@ -163,7 +191,7 @@ const Training = () => {
     samplesRef.current.push(sample);
     while (samplesRef.current[0]?.t < t - SAMPLE_KEEP_MS) samplesRef.current.shift();
 
-    const beat    = detectorRef.current.push(sample);
+    const beat     = detectorRef.current.push(sample);
     const inWarmup = t - startTimeRef.current < WARMUP_MS;
 
     if (beat && !inWarmup) {
@@ -223,23 +251,89 @@ const Training = () => {
     vfcIdRef.current = null;
   };
 
-  // ── 全停止 ─────────────────────────────────────────────────────────────────
-  const stopEverything = () => {
-    runIdRef.current += 1;            // 進行中の getUserMedia を無効化する
+  // ── カメラ ─────────────────────────────────────────────────────────────────
+  // カメラは練習とは独立に開いておく。待機画面で許可して映り方を確かめ、
+  // 練習を停止してもプレビューは残す。画面を離れたときに解放する。
+  const hasLiveStream = () =>
+    !!streamRef.current?.getVideoTracks().some(tr => tr.readyState === 'live');
+
+  const ensureCamera = () => {
+    if (hasLiveStream()) return Promise.resolve(streamRef.current);
+    if (cameraPromiseRef.current) return cameraPromiseRef.current;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCamState('unavailable');
+      return Promise.resolve(null);
+    }
+
+    setCamState('requesting');
+    const p = navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'user',
+        width:     { ideal: 320 },
+        height:    { ideal: 240 },
+        frameRate: { ideal: 30  },
+      },
+      audio: false,
+    })
+      .then((stream) => {
+        // 許可ダイアログ中に画面を離れていたら、掴んだカメラをすぐ手放す
+        if (unmountedRef.current) {
+          stream.getTracks().forEach(tr => tr.stop());
+          return null;
+        }
+        streamRef.current = stream;
+        cameraGrantedRef.current = true;
+        setCameraGranted(true);
+        // iOS はアプリを裏に回すとカメラを止める。止まったら「オフ」に戻して再度オンにできるようにする
+        stream.getVideoTracks().forEach((tr) => {
+          tr.onended = () => {
+            if (streamRef.current !== stream) return;
+            streamRef.current = null;
+            setCamState('off');
+          };
+        });
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          video.play().catch(() => {});
+        }
+        setCamState('on');
+        return stream;
+      })
+      .catch((err) => {
+        if (!unmountedRef.current) {
+          setCamState(err?.name === 'NotAllowedError' || err?.name === 'SecurityError' ? 'denied' : 'error');
+        }
+        return null;
+      })
+      .finally(() => { cameraPromiseRef.current = null; });
+
+    cameraPromiseRef.current = p;
+    return p;
+  };
+
+  const releaseCamera = () => {
+    streamRef.current?.getTracks().forEach(tr => tr.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+
+  // ── 練習の停止（カメラは止めない）──────────────────────────────────────────
+  const stopPractice = () => {
+    runIdRef.current += 1;            // 進行中の開始処理を無効化する
     stopFrameLoop();
     clearTimeout(schedulerTimerRef.current);
     beepTimersRef.current.forEach(clearTimeout);   // 先読み済みのビープを鳴らさない
     beepTimersRef.current = [];
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    if (videoRef.current) videoRef.current.srcObject = null;
-    streamRef.current   = null;
-    samplesRef.current  = [];
+    samplesRef.current   = [];
     intervalsRef.current = [];
     beatCountRef.current = 0;
   };
 
-  // ── マウント時: Blob URL と canvas を準備 ────────────────────────────────────
+  // ── マウント時: Blob URL・canvas・許可状態 ──────────────────────────────────
   useEffect(() => {
+    unmountedRef.current = false;
+
     const canvas = document.createElement('canvas');
     canvas.width  = CAM_W;
     canvas.height = CAM_H;
@@ -248,8 +342,27 @@ const Training = () => {
     const url = createBeepBlobUrl();
     beepUrlRef.current = url;
 
+    // Permissions API で許可済みか調べ、ボタンの文言を「許可する」「オンにする」で出し分ける。
+    // 未対応のブラウザ（'camera' を受け付けない等）は例外になるので無視する。
+    let permStatus = null;
+    const applyPerm = (st) => {
+      cameraGrantedRef.current = st.state === 'granted';
+      setCameraGranted(st.state === 'granted');
+    };
+    navigator.permissions?.query({ name: 'camera' })
+      .then((st) => {
+        if (unmountedRef.current) return;
+        permStatus = st;
+        applyPerm(st);
+        st.onchange = () => applyPerm(st);
+      })
+      .catch(() => {});
+
     return () => {
-      stopEverything();
+      unmountedRef.current = true;
+      if (permStatus) permStatus.onchange = null;
+      stopPractice();
+      releaseCamera();
       if (audioCtxRef.current) {
         audioCtxRef.current.close();
         audioCtxRef.current = null;
@@ -263,7 +376,8 @@ const Training = () => {
 
   // ── 開始 ───────────────────────────────────────────────────────────────────
   const startTraining = async () => {
-    // ① メトロノーム（同期）: iOS の音声セッションを Playback に昇格させる
+    // ① メトロノーム（同期）: タップの中で1拍目を鳴らし、iOS の音声セッションを
+    //    Playback に昇格させる（マナーモードでも鳴る）。リズム音 OFF なら鳴らさない。
     if (!audioCtxRef.current) {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -279,203 +393,248 @@ const Training = () => {
     intervalsRef.current = [];
     beatCountRef.current = 0;
     startTimeRef.current = performance.now();
-    lastUiTimeRef.current  = 0;
+    lastUiTimeRef.current = 0;
     setBpm(null);
     setBeatCount(0);
     setMotionDetected(false);
     setCameraError(null);
     setIsCounting(true);
 
-    // ③ カメラ（非同期）: getUserMedia は上記 playBeep() の後なので
-    //    iOS の Playback セッション昇格には影響しない
     signalRef.current   = new MotionSignal(CAM_W, CAM_H);
     detectorRef.current = new BeatDetector();
 
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraError('カメラが利用できません（HTTPS 環境が必要です）');
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width:     { ideal: 320 },
-          height:    { ideal: 240 },
-          frameRate: { ideal: 30  },
-        },
-        audio: false,
-      });
-      // 許可ダイアログ中に停止・離脱していたら、掴んだストリームを畳んで何もしない
-      const video = videoRef.current;
-      if (myRun !== runIdRef.current || !video) {
-        stream.getTracks().forEach(tr => tr.stop());
-        return;
-      }
-
-      streamRef.current = stream;
-      video.srcObject = stream;
-
-      try {
-        await video.play();
-      } catch {
-        // 再生できなかったらカメラを掴んだままにしない
-        stream.getTracks().forEach(tr => tr.stop());
-        streamRef.current = null;
-        video.srcObject = null;
-        setCameraError('カメラ映像を再生できませんでした');
-        return;
-      }
-
-      if (myRun !== runIdRef.current) {
-        stream.getTracks().forEach(tr => tr.stop());
-        streamRef.current = null;
-        video.srcObject = null;
-        return;
-      }
-
-      startFrameLoop();
-    } catch {
-      setCameraError('カメラを起動できませんでした');
+    // ③ カメラ: 待機画面で許可済みならそのまま使う。まだなら（許可ボタンを押さずに
+    //    開始した場合）ここで要求する。getUserMedia は playBeep() の後なので
+    //    iOS の Playback 昇格には影響しない。
+    if (camState === 'denied') {
+      setCameraError('カメラが許可されていないため、テンポは測れません');
+      return;
     }
+    if (camState === 'unavailable') {
+      setCameraError('この端末ではカメラを使えません');
+      return;
+    }
+
+    const stream = await ensureCamera();
+    if (myRun !== runIdRef.current) return;   // 待っている間に停止した
+    if (!stream) {
+      setCameraError('カメラを起動できなかったため、テンポは測れません');
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.srcObject !== stream) video.srcObject = stream;
+    try {
+      await video.play();
+    } catch {
+      setCameraError('カメラ映像を再生できませんでした');
+      return;
+    }
+    if (myRun !== runIdRef.current) return;
+    startFrameLoop();
   };
 
   // ── 停止 ───────────────────────────────────────────────────────────────────
   const stopTraining = () => {
-    stopEverything();
+    stopPractice();
     setIsCounting(false);
   };
 
   const status = getBpmStatus(bpm);
+
+  // カメラ窓に重ねる表示
+  const camMessage = {
+    off:         cameraGranted ? 'カメラをオンにすると、ここに映ります' : '練習の前にカメラを許可してください',
+    requesting:  '許可を待っています…',
+    denied:      'カメラが許可されていません。設定アプリ › Safari › カメラ で許可できます',
+    error:       'カメラを起動できませんでした',
+    unavailable: 'この端末ではカメラを使えません',
+  }[camState];
+  const showCamButton = !isCounting && (camState === 'off' || camState === 'error');
+  const camButtonLabel = camState === 'error' ? 'もう一度試す' : cameraGranted ? 'カメラをオンにする' : 'カメラを許可する';
 
   // ── レンダリング ────────────────────────────────────────────────────────────
   return (
     <div style={{ height: '100dvh', background: '#F8F9FA', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
       {/* ヘッダー */}
-      <div style={{ padding: '12px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white' }}>
+      <div style={{ padding: '10px 16px 10px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'white', gap: '8px' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           <Heart size={18} color="#FF4B72" fill="#FF4B72" />
           <h2 style={{ fontSize: '1rem', fontWeight: 900, color: '#333', margin: 0 }}>姿勢復習</h2>
         </div>
-        <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer' }}>
-          <ArrowLeft size={24} />
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button
+            onClick={toggleSound}
+            aria-pressed={soundOn}
+            aria-label={soundOn ? 'リズム音を消す' : 'リズム音を鳴らす'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: '999px',
+              border: `2px solid ${soundOn ? '#FF4B72' : '#DDD'}`,
+              background: soundOn ? '#FFF0F4' : '#F4F4F4',
+              color: soundOn ? '#FF4B72' : '#999',
+              fontWeight: 900, fontSize: '0.8rem', cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />}
+            リズム音 {soundOn ? 'ON' : 'OFF'}
+          </button>
+          <button onClick={() => navigate('/')} aria-label="ホームに戻る" style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', padding: '4px' }}>
+            <ArrowLeft size={24} />
+          </button>
+        </div>
       </div>
 
       {/* メインコンテンツ
-          練習パネルは display で出し分ける（AnimatePresence で外すと <video> が
-          アンマウントされ、startTraining 時に videoRef.current が null になるため） */}
+          カメラ窓（<video>）は待機中・練習中で同じ要素を使い続ける。
+          兄弟要素は条件付きで外さず display で出し分け、DOM 上の位置を固定している。 */}
       <main style={{
         flex: 1, minHeight: 0, overflow: 'hidden',
         display: 'flex', flexDirection: 'column', padding: '14px 16px', gap: '12px',
         justifyContent: 'center',
       }}>
 
-        {/* ── イラスト（常時表示） ── */}
+        {/* ── イラスト ── */}
         <div style={{
-          background: 'white', borderRadius: '24px', padding: isCounting ? '10px' : '16px',
+          display: 'flex', background: 'white', borderRadius: '24px', padding: isCounting ? '10px' : '12px',
           boxShadow: '0 8px 24px rgba(0,0,0,0.05)', textAlign: 'center',
-          minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: 0, flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           transition: 'padding 0.4s ease',
         }}>
           <img src={cprImg} alt="CPR" style={{
-            width: '100%', maxWidth: isCounting ? '150px' : '240px',
+            width: '100%', maxWidth: isCounting ? '150px' : '170px',
             minHeight: 0, maxHeight: '100%', objectFit: 'contain',
             marginBottom: '6px', transition: 'max-width 0.4s ease',
           }} />
-          <div style={{ fontSize: isCounting ? '0.85rem' : '1rem', fontWeight: 900, color: '#FF4B72', flexShrink: 0 }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 900, color: '#FF4B72', flexShrink: 0 }}>
             目標テンポ: {BPM_TARGET}回/分
           </div>
         </div>
 
-        {/* ── 練習中: ステータス + ゲージ + プレビュー ── */}
-        <div style={{ display: isCounting ? 'flex' : 'none', flexDirection: 'column', gap: '10px', flexShrink: 0 }}>
+        {/* ── 待機中: 置き方の注意 ── */}
+        <div style={{
+          display: isCounting ? 'none' : 'flex', alignItems: 'center', gap: '8px', flexShrink: 0,
+          background: '#FFF7E6', border: '1.5px solid #FCD9A0', borderRadius: '14px', padding: '10px 14px',
+          color: '#B45309', fontWeight: 900, fontSize: '0.88rem',
+        }}>
+          <CircleAlert size={18} style={{ flexShrink: 0 }} />
+          カメラに頭が映るように端末を置いてください
+        </div>
 
-          {/* ステータス */}
-          <div style={{ textAlign: 'center', minHeight: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {status ? (
-              <span style={{
-                background: status.color + '1F', color: status.color,
-                fontWeight: 900, fontSize: '1.05rem', padding: '8px 24px', borderRadius: '22px',
-                transition: 'color 0.3s ease, background 0.3s ease',
+        {/* ── 練習中: ステータス ── */}
+        <div style={{ display: isCounting ? 'flex' : 'none', textAlign: 'center', minHeight: '36px', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          {status ? (
+            <span style={{
+              background: status.color + '1F', color: status.color,
+              fontWeight: 900, fontSize: '1.05rem', padding: '8px 24px', borderRadius: '22px',
+              transition: 'color 0.3s ease, background 0.3s ease',
+            }}>
+              {status.text}
+            </span>
+          ) : (
+            <span style={{ color: cameraError ? '#F87171' : '#BBB', fontSize: '0.85rem', fontWeight: 700 }}>
+              {cameraError ? cameraError
+                : camState === 'requesting' ? 'カメラの許可を待っています…'
+                : motionDetected ? '計測中…' : 'カメラに頭が映るようにしてください'}
+            </span>
+          )}
+        </div>
+
+        {/* ── ゲージ（練習中のみ）＋ カメラ窓（常時）── */}
+        <div style={{ display: 'grid', gridTemplateColumns: isCounting ? '1fr 1fr' : '1fr', gap: '12px', flexShrink: 0 }}>
+
+          {/* ゲージ */}
+          <div style={{ display: isCounting ? 'flex' : 'none', background: 'white', borderRadius: '18px', padding: '14px 10px 12px', boxShadow: '0 4px 12px rgba(0,0,0,0.04)', flexDirection: 'column', alignItems: 'center' }}>
+            <svg viewBox="0 0 200 116" style={{ width: '100%', height: 'auto', display: 'block' }}>
+              {/* ゾーン: おそい / ちょうどよい / はやい */}
+              <path d={arcPath(GAUGE_R, GAP, T_LOW - GAP)} stroke={C_SLOW} strokeWidth="16" fill="none"
+                    strokeLinecap="round" opacity={status?.key === 'slow' ? 1 : 0.22}
+                    style={{ transition: 'opacity 0.3s ease' }} />
+              <path d={arcPath(GAUGE_R, T_LOW + GAP, T_HIGH - GAP)} stroke={C_GOOD} strokeWidth="16" fill="none"
+                    strokeLinecap="round" opacity={status?.key === 'good' ? 1 : 0.22}
+                    style={{ transition: 'opacity 0.3s ease' }} />
+              <path d={arcPath(GAUGE_R, T_HIGH + GAP, 1 - GAP)} stroke={C_FAST} strokeWidth="16" fill="none"
+                    strokeLinecap="round" opacity={status?.key === 'fast' ? 1 : 0.22}
+                    style={{ transition: 'opacity 0.3s ease' }} />
+
+              {/* 針（左向きに描いて t×180° 回転） */}
+              <g style={{
+                transform: `rotate(${(bpm ? gaugeT(bpm) : 0.5) * 180}deg)`,
+                transformOrigin: '100px 100px',
+                transformBox: 'view-box',
+                transition: 'transform 0.45s cubic-bezier(0.34, 1.15, 0.64, 1)',
+                opacity: bpm ? 1 : 0.22,
               }}>
-                {status.text}
-              </span>
+                <polygon points="40,100 100,94.5 100,105.5" fill="#334155" />
+              </g>
+              <circle cx="100" cy="100" r="8.5" fill="#fff" stroke="#334155" strokeWidth="3.5" />
+            </svg>
+
+            <div style={{
+              fontSize: '2.1rem', fontWeight: 900, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1,
+              color: status?.color ?? '#DDD', transition: 'color 0.3s ease',
+            }}>
+              {bpm ?? '—'}
+            </div>
+            <div style={{ fontSize: '0.7rem', color: '#BBB', fontWeight: 700 }}>回/分</div>
+          </div>
+
+          {/* カメラ窓 */}
+          <div style={{
+            background: '#1B1B1B', borderRadius: '18px', overflow: 'hidden', position: 'relative',
+            aspectRatio: isCounting ? '1 / 1' : '4 / 3',
+          }}>
+            <video ref={videoRef} playsInline muted style={{
+              position: 'absolute', inset: 0, width: '100%', height: '100%',
+              objectFit: 'cover', transform: 'scaleX(-1)',
+              opacity: camState === 'on' ? 1 : 0,
+            }} />
+
+            {camState === 'on' ? (
+              !isCounting && (
+                <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '8px', background: 'linear-gradient(transparent, rgba(0,0,0,0.6))', color: 'white', fontSize: '0.8rem', fontWeight: 700, textAlign: 'center' }}>
+                  頭が映っているか確認してください
+                </div>
+              )
             ) : (
-              <span style={{ color: cameraError ? '#F87171' : '#BBB', fontSize: '0.85rem', fontWeight: 700 }}>
-                {cameraError ? `${cameraError}（メトロノームは継続中）`
-                  : motionDetected ? '計測中…' : 'カメラに上半身を映してください'}
-              </span>
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                gap: '10px', padding: '14px', textAlign: 'center', lineHeight: 1.6,
+                color: camState === 'denied' || camState === 'error' ? '#FCA5A5' : '#999',
+                fontSize: isCounting ? '0.7rem' : '0.82rem', fontWeight: 700,
+              }}>
+                <Camera size={isCounting ? 20 : 28} color={camState === 'denied' || camState === 'error' ? '#FCA5A5' : '#777'} />
+                <span>{camMessage}</span>
+                {showCamButton && (
+                  <button onClick={() => { ensureCamera(); }} className="btn-pop"
+                    style={{ fontSize: '1rem', padding: '10px 22px' }}>
+                    <Camera size={18} /> {camButtonLabel}
+                  </button>
+                )}
+              </div>
             )}
           </div>
+        </div>
 
-          {/* ゲージ + カメラプレビュー */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        {/* ── 待機中: プライバシー表記 ── */}
+        <div style={{ display: isCounting ? 'none' : 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.75rem', color: '#10B981', fontWeight: 700, flexShrink: 0 }}>
+          <ShieldCheck size={14} />
+          映像は端末の外に送信せず、保存もしません
+        </div>
 
-            {/* ゲージ */}
-            <div style={{ background: 'white', borderRadius: '18px', padding: '14px 10px 12px', boxShadow: '0 4px 12px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <svg viewBox="0 0 200 116" style={{ width: '100%', height: 'auto', display: 'block' }}>
-                {/* ゾーン: おそい / ちょうどよい / はやい */}
-                <path d={arcPath(GAUGE_R, GAP, T_LOW - GAP)} stroke={C_SLOW} strokeWidth="16" fill="none"
-                      strokeLinecap="round" opacity={status?.key === 'slow' ? 1 : 0.22}
-                      style={{ transition: 'opacity 0.3s ease' }} />
-                <path d={arcPath(GAUGE_R, T_LOW + GAP, T_HIGH - GAP)} stroke={C_GOOD} strokeWidth="16" fill="none"
-                      strokeLinecap="round" opacity={status?.key === 'good' ? 1 : 0.22}
-                      style={{ transition: 'opacity 0.3s ease' }} />
-                <path d={arcPath(GAUGE_R, T_HIGH + GAP, 1 - GAP)} stroke={C_FAST} strokeWidth="16" fill="none"
-                      strokeLinecap="round" opacity={status?.key === 'fast' ? 1 : 0.22}
-                      style={{ transition: 'opacity 0.3s ease' }} />
-
-                {/* 針（左向きに描いて t×180° 回転） */}
-                <g style={{
-                  transform: `rotate(${(bpm ? gaugeT(bpm) : 0.5) * 180}deg)`,
-                  transformOrigin: '100px 100px',
-                  transformBox: 'view-box',
-                  transition: 'transform 0.45s cubic-bezier(0.34, 1.15, 0.64, 1)',
-                  opacity: bpm ? 1 : 0.22,
-                }}>
-                  <polygon points="40,100 100,94.5 100,105.5" fill="#334155" />
-                </g>
-                <circle cx="100" cy="100" r="8.5" fill="#fff" stroke="#334155" strokeWidth="3.5" />
-              </svg>
-
-              <div style={{
-                fontSize: '2.1rem', fontWeight: 900, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1,
-                color: status?.color ?? '#DDD', transition: 'color 0.3s ease',
-              }}>
-                {bpm ?? '—'}
-              </div>
-              <div style={{ fontSize: '0.7rem', color: '#BBB', fontWeight: 700 }}>回/分</div>
-            </div>
-
-            {/* カメラプレビュー */}
-            <div style={{ background: '#1B1B1B', borderRadius: '18px', overflow: 'hidden', position: 'relative', aspectRatio: '1 / 1' }}>
-              <video ref={videoRef} playsInline muted style={{
-                position: 'absolute', inset: 0, width: '100%', height: '100%',
-                objectFit: 'cover', transform: 'scaleX(-1)',
-              }} />
-              {cameraError && (
-                <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', fontSize: '0.72rem', textAlign: 'center', padding: '10px' }}>
-                  カメラを使用できません
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 回数・動き インジケータ */}
-          <div style={{ background: 'white', borderRadius: '14px', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.04)' }}>
-            <Activity size={15} color={motionDetected ? C_GOOD : '#CCC'} />
-            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: motionDetected ? C_GOOD : '#CCC', flex: 1 }}>
-              {motionDetected ? '動きを検出中' : '動きを待っています…'}
-            </span>
-            <Camera size={13} color={cameraError ? '#F87171' : '#AAA'} />
-            <span style={{ fontSize: '0.75rem', color: '#888', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-              {beatCount} 回
-            </span>
-          </div>
+        {/* ── 練習中: 回数・動き インジケータ ── */}
+        <div style={{ display: isCounting ? 'flex' : 'none', background: 'white', borderRadius: '14px', padding: '10px 16px', alignItems: 'center', gap: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.04)', flexShrink: 0 }}>
+          <Activity size={15} color={motionDetected ? C_GOOD : '#CCC'} />
+          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: motionDetected ? C_GOOD : '#CCC', flex: 1 }}>
+            {motionDetected ? '動きを検出中' : '動きを待っています…'}
+          </span>
+          <Camera size={13} color={cameraError ? '#F87171' : '#AAA'} />
+          <span style={{ fontSize: '0.75rem', color: '#888', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+            {beatCount} 回
+          </span>
         </div>
       </main>
-
 
       {/* フッター */}
       <div style={{ flexShrink: 0, padding: '20px', background: 'white', borderTop: '2px solid #EEE', textAlign: 'center' }}>
